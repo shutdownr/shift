@@ -1,0 +1,8 @@
+*.tsf
+*.pkl
+**/__pycache__
+**/__MACOSX
+**/.DS_Store
+*.csv
+*.pth
+.venv
