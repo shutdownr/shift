@@ -1,7 +1,7 @@
 import copy
 import time
 
-import keras
+# import keras
 import numpy as np
 import random
 from sklearn.neighbors import KNeighborsRegressor
@@ -10,7 +10,7 @@ import torch.nn as nn
 
 from statsforecast.models import AutoARIMA, AutoTheta
 
-from other_models.NBEATS import NBeatsNet
+# from other_models.NBEATS import NBeatsNet
 from other_models.TimesNet import Model as TimesNet
 from other_models.DLinear import Model as DLinear
 from other_models.FEDformer import Model as FEDformer
@@ -216,6 +216,43 @@ def predict_shift(dataset):
             y_pred.append(pred)
 
     return np.array(y_pred, dtype=object), total_inference_time
+
+
+def predict_shift_distances(dataset):
+    # If validation data is present, merge this into the training data
+    if len(dataset["X_val"]) > 0:
+        data = merge_train_val(dataset)
+    else:
+        data = copy.deepcopy(dataset)
+
+    total_inference_time = 0
+
+    y_pred = []
+    if dataset["is_multivariate"] and len(data["ts_raw"][0].shape) > 1:
+        # Note: Multivariate data with multiple samples
+        raise NotImplementedError("Not implemented for MTS with multiple samples")
+    else:
+        # Note: Unvariate data with multiple samples or
+        #       Multivariate data with one sample (in this case each channel is a ts_raw)
+        all_distances = []
+        for index in range(len(data["ts_raw"])):
+            h = len(data["y_train"][index][0])
+            timeseries = data["ts_raw"][index]
+
+            model = SHIFT()
+            model.chain = False
+            model.optimize_hyperparameters(
+                timeseries, data["X_train"][index], data["y_train"][index]
+            )
+
+            t0 = time.time()
+            pred = model.fit_predict(timeseries, data["X_test"][index], h)
+            total_inference_time += time.time() - t0
+
+            y_pred.append(pred)
+            all_distances.append(np.sum(np.mean(model.distances, axis=(1)), axis=1))
+
+    return np.array(y_pred, dtype=object), all_distances, total_inference_time
 
 
 def predict_shift_ablation(

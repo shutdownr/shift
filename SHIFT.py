@@ -104,6 +104,7 @@ class SHIFT:
             similar_horizons, distances = self._find_similar_shapelets_brute_force(
                 X_test_trimmed, shapelets, shapelet_horizons, n
             )
+        self.distances = distances
 
         pred_s = self._train_predict_shapelets(
             X_test_trimmed[:, 0, :],
