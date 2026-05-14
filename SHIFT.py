@@ -83,9 +83,9 @@ class SHIFT:
             l_z = l
             can_chain = np.min([b // l, math.ceil(h / l)]) > 1
             can_chain_z = can_chain
-            max_distance = np.Inf
+            max_distance = np.inf
             max_distance_z = max_distance
-            std_distance = np.Inf
+            std_distance = np.inf
             std_distance_z = std_distance
             chain_z_weights = np.ones(4)
 
@@ -494,7 +494,7 @@ class SHIFT:
         distances,
         l=9,
         k=1,
-        max_distance=np.Inf,
+        max_distance=np.inf,
         std_distance=0,
         chain=True,
         return_distance=False,

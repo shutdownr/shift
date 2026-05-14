@@ -13,6 +13,14 @@ class Config:
         "m4_w",
         "m4_y",
         "transactions",
+        "tourism_q",
+        "tourism_y",
+        "m1_y",
+        "m1_q",
+        "m1_m",
+        "m4_q",
+        # "m4_d", # excluded, as no algorithm can predict this with OWA<1
+        # "m4_m", # excluded, as no algorithm can predict this with OWA<1
     ]
     # Dataset identifiers for by-sample experiment
     by_sample_dataset_names = ["nn5", "tourism", "m4_h", "m4_w", "m3_o"]
@@ -31,6 +39,14 @@ class Config:
         "m4_w": 0.6,
         "m4_y": 0.6,
         "transactions": 0.6,
+        "tourism_q": 0.6,
+        "tourism_y": 0.6,
+        "m1_y": 0.6,
+        "m1_q": 0.6,
+        "m1_m": 0.6,
+        "m4_d": 0.6,
+        "m4_m": 0.6,
+        "m4_q": 0.6,
     }
     # Validation set size
     val_sizes = {
@@ -46,8 +62,17 @@ class Config:
         "m4_w": 0.2,
         "m4_y": 0.2,
         "transactions": 0.2,
+        "tourism_q": 0.2,
+        "tourism_y": 0.2,
+        "m1_y": 0.2,
+        "m1_q": 0.2,
+        "m1_m": 0.2,
+        "m4_d": 0.2,
+        "m4_m": 0.2,
+        "m4_q": 0.2,
     }
-    # Stride length (sliding window step size) for generating train/val/test instances
+    # Stride length (sliding window step size) for generating train/val/test instances.
+    # Scaled to per-series length: 1 for series <=200 points, 5 for ~500-2000, 20 for ~2000+.
     stride_lengths = {
         "cif": 1,
         "nn5": 5,
@@ -61,8 +86,18 @@ class Config:
         "m4_w": 5,
         "m4_y": 5,
         "transactions": 5,
+        "tourism_q": 1,
+        "tourism_y": 1,
+        "m1_y": 1,
+        "m1_q": 1,
+        "m1_m": 1,
+        "m4_d": 20,
+        "m4_m": 5,
+        "m4_q": 1,
     }
-    # Default length of the input window (x) for train/val/test instances
+    # Default length of the input window (x) for train/val/test instances.
+    # For datasets added alongside the H x BH benchmark sweep, the sweep overrides
+    # this value; the default is set to the top of the grid (40).
     backhorizons = {
         "cif": 15,
         "nn5": 70,
@@ -76,8 +111,17 @@ class Config:
         "m4_w": 20,
         "m4_y": 8,
         "transactions": 14,
+        "tourism_q": 10,
+        "tourism_y": 10,
+        "m1_y": 10,
+        "m1_q": 10,
+        "m1_m": 10,
+        "m4_d": 10,
+        "m4_m": 10,
+        "m4_q": 10,
     }
-    # Default length of the horizon (y) for train/val/test instances
+    # Default length of the horizon (y) for train/val/test instances.
+    # Set to the top of the H x BH benchmark grid for new datasets (sweep overrides).
     horizons = {
         "cif": 12,
         "nn5": 56,
@@ -91,10 +135,41 @@ class Config:
         "m4_w": 13,
         "m4_y": 6,
         "transactions": 7,
+        "tourism_q": 10,
+        "tourism_y": 10,
+        "m1_y": 10,
+        "m1_q": 10,
+        "m1_m": 10,
+        "m4_d": 10,
+        "m4_m": 10,
+        "m4_q": 10,
     }
     # Timesnet requires different parameters to be set depending on the dataset
     # These parameters are taken as provided in the authors' codebase and adapted for the other datasets
     # https://github.com/thuml/Time-Series-Library/blob/main/scripts/short_term_forecast/TimesNet_M4.sh
+    # Frequency string passed to TimesNet / FEDformer / NonStationaryT / DLinear.
+    timesnet_frequency_map = {
+        "cif": "m",
+        "nn5": "d",
+        "tourism": "m",
+        "weather": "h",
+        "m3_m": "m",
+        "m3_q": "q",
+        "m3_y": "y",
+        "m3_o": "y",
+        "m4_h": "h",
+        "m4_w": "w",
+        "m4_y": "y",
+        "transactions": "d",
+        "tourism_q": "q",
+        "tourism_y": "y",
+        "m1_y": "y",
+        "m1_q": "q",
+        "m1_m": "m",
+        "m4_d": "d",
+        "m4_m": "m",
+        "m4_q": "q",
+    }
     timesnet_d_model = {
         "cif": 16,
         "nn5": 16,
@@ -108,6 +183,14 @@ class Config:
         "m4_w": 32,
         "m4_y": 64,
         "transactions": 32,
+        "tourism_q": 32,
+        "tourism_y": 64,
+        "m1_y": 64,
+        "m1_q": 64,
+        "m1_m": 32,
+        "m4_d": 32,
+        "m4_m": 32,
+        "m4_q": 64,
     }
     timesnet_d_ff = {
         "cif": 32,
@@ -122,4 +205,36 @@ class Config:
         "m4_w": 32,
         "m4_y": 64,
         "transactions": 32,
+        "tourism_q": 32,
+        "tourism_y": 64,
+        "m1_y": 64,
+        "m1_q": 64,
+        "m1_m": 32,
+        "m4_d": 32,
+        "m4_m": 32,
+        "m4_q": 64,
+    }
+    # Maximum number of series to use per dataset (None = use all).
+    # Large datasets are subsampled uniformly at random (fixed seed) for tractable runtimes.
+    max_series = {
+        "cif": None,
+        "nn5": None,
+        "tourism": None,
+        "weather": None,
+        "m3_m": None,
+        "m3_q": None,
+        "m3_y": None,
+        "m3_o": None,
+        "m4_h": None,
+        "m4_w": None,
+        "m4_y": None,
+        "transactions": None,
+        "tourism_q": None,
+        "tourism_y": None,
+        "m1_y": None,
+        "m1_q": None,
+        "m1_m": None,
+        "m4_d": 1000,
+        "m4_m": 1000,
+        "m4_q": 1000,
     }

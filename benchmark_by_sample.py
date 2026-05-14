@@ -3,7 +3,7 @@ import pickle
 
 import numpy as np
 
-from basic_models import predict_shift, predict_nbeats, predict_dlinear
+from basic_models import predict_chronos2, predict_dlinear, predict_nbeats, predict_shift
 from benchmark_backhorizon_horizon import benchmark
 from data_wrangling import read_dataset, flatten, scale, inverse_flatten_predictions, inverse_scale_predictions
 from dataset_config import Config
@@ -19,6 +19,7 @@ algorithms = {
     "SHIFT": predict_shift,
     "N-BEATS": predict_nbeats,
     "DLinear": predict_dlinear,
+    "Chronos2": predict_chronos2,
 }
 h = 5
 bh = 10
@@ -51,16 +52,28 @@ def benchmark_by_sample(algorithms, datasets, error_metrics, random_states):
                     sample = {}
                     for k,v in dataset_scaled.items():
                         sample[k] = np.array(v[i])
-                    pred, _ = algorithm(sample, Config.timesnet_frequency_map[dataset_name], random_states)
+                    pred, _ = algorithm(sample, random_states)
                     for index in range(len(pred)):
                         y_pred[index].extend(pred[index])
                 y_pred = [inverse_flatten_predictions(pred, original_shapes) for pred in y_pred]
                 y_pred = np.array([inverse_scale_predictions(np.array(pred), scalers) for pred in y_pred])
-            elif algo_name == "N-BEATS":
+            elif algo_name in ["Chronos2"]:
+                # Zero-shot foundation models: use raw (unscaled) data
+                y_pred = [[] for _ in range(len(random_states))]
+                for i in range(len(dataset["ts_raw"])):
+                    sample = {}
+                    for k, v in dataset.items():
+                        sample[k] = np.array(v[i])
+                    pred, _ = algorithm(sample, random_states)
+                    for index in range(len(pred)):
+                        y_pred[index].extend(pred[index])
+                y_pred = [inverse_flatten_predictions(pred, original_shapes) for pred in y_pred]
+                y_pred = np.array(y_pred)
+            elif algo_name in ["N-BEATS"]:
                 y_pred = [[] for _ in range(len(random_states))]
                 for i in range(len(dataset_scaled["ts_raw"])):
                     sample = {}
-                    for k,v in dataset_scaled.items():
+                    for k, v in dataset_scaled.items():
                         sample[k] = np.array(v[i])
                     pred, _ = algorithm(sample, random_states)
                     for index in range(len(pred)):

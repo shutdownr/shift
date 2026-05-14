@@ -34,6 +34,17 @@ Links for downloading the datasets:
 - [M4 Weekly](https://www.kaggle.com/datasets/yogesh94/m4-forecasting-competition-dataset?select=Weekly-train.csv)
 - [M4 Yearly](https://www.kaggle.com/datasets/yogesh94/m4-forecasting-competition-dataset?select=Yearly-train.csv)
 - [Transactions](https://www.kaggle.com/competitions/store-sales-time-series-forecasting/data?select=transactions.csv)
+- [Tourism Quarterly](https://zenodo.org/record/4656093)
+- [Tourism Yearly](https://zenodo.org/record/4656103)
+- [M1 Yearly](https://zenodo.org/record/4656193)
+- [M1 Quarterly](https://zenodo.org/record/4656154)
+- [M1 Monthly](https://zenodo.org/record/4656159)
+- [M4 Daily](https://zenodo.org/record/4656548)
+- [M4 Monthly](https://zenodo.org/record/4656480)
+- [M4 Quarterly](https://zenodo.org/record/4656410)
+- [NN5 Weekly](https://zenodo.org/record/4656125)
+- [Hospital](https://zenodo.org/record/4656014)
+- [FRED-MD](https://zenodo.org/record/4654833)
 
 Run the benchmarks or alternatively use the provided .pkl files for the results described in the paper.<br>
 Caution: Running the benchmark with TimesNet will lead to extremely long runtimes. Edit *algorithms* in benchmark_backhorizon_horizon.py to change the algorithms to be included in the benchmark.<br>

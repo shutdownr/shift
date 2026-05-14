@@ -138,7 +138,7 @@ class NBeatsNet:
         # mechanism to restore weights when block share the same weights.
         # only useful when share_weights_in_stack=True.
         if self.share_weights_in_stack:
-            layer_name = layer_with_weights.name.split('/')[-1]
+            layer_name = layer_with_weights.name.split('_')[-1]
             try:
                 reused_weights = self.weights[stack_id][layer_name]
                 return reused_weights
@@ -162,7 +162,7 @@ class NBeatsNet:
 
         # update name (useful when share_weights_in_stack=True)
         def n(layer_name):
-            return '/'.join([str(stack_id), str(block_id), stack_type, layer_name])
+            return '_'.join([str(stack_id), str(block_id), stack_type, layer_name])
 
         backcast_ = {}
         forecast_ = {}

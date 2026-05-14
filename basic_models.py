@@ -1,7 +1,7 @@
 import copy
 import time
 
-# import keras
+import keras
 import numpy as np
 import random
 from sklearn.neighbors import KNeighborsRegressor
@@ -10,14 +10,93 @@ import torch.nn as nn
 
 from statsforecast.models import AutoARIMA, AutoTheta
 
-# from other_models.NBEATS import NBeatsNet
+from other_models.NBEATS import NBeatsNet
 from other_models.TimesNet import Model as TimesNet
 from other_models.DLinear import Model as DLinear
 from other_models.FEDformer import Model as FEDformer
 from other_models.Nonstationary_Transformer import Model as Nonstationary_Transformer
+from other_models.PatchTST import Model as PatchTST
+from other_models.TimeMixer import Model as TimeMixer
+from other_models.iTransformer import Model as iTransformer
 from other_models.train_model import train_model, predict, _acquire_device
 from SHIFT import SHIFT
 from utility import merge_train_val
+
+CHRONOS2_MODEL_ID = "amazon/chronos-2"
+CHRONOS2_PREDICT_BATCH_SIZE = 256
+
+
+def _chronos2_stack_mean_predictions(mean_list):
+    """
+    Concatenate Chronos-2 median / mean outputs into ``(n_samples, horizon)``.
+
+    ``predict_quantiles`` returns one tensor per internal batch; each tensor is
+    shaped ``(batch_size, prediction_length)`` (or ``(n_variates, prediction_length)``
+    for a single multivariate item). We must **concatenate** batches, not ``stack``.
+    """
+    parts = []
+    for mean_tensor in mean_list:
+        row = mean_tensor.detach().float().cpu().numpy()
+        if row.ndim == 1:
+            parts.append(row[np.newaxis, :])
+        else:
+            parts.append(row)
+    return np.concatenate(parts, axis=0)
+
+
+def _prepare_chronos2_inputs(dataset):
+    """
+    Build Chronos-2 ``inputs`` from a flattened benchmark ``dataset``.
+
+    Returns
+    -------
+    inputs : list[np.ndarray] | np.ndarray
+        Univariate list of 1D contexts, or a ``(batch, n_variates, history)`` array.
+    layout : str
+        ``list_univariate`` or ``batched_multivariate`` (informational).
+    """
+    X_test = dataset["X_test"]
+    multivariate = dataset.get("is_multivariate", False)
+    if multivariate and not isinstance(X_test, np.ndarray):
+        channels = [np.asarray(ch, dtype=np.float32) for ch in X_test]
+        n_samples = channels[0].shape[0]
+        stacked = np.stack(
+            [
+                np.stack([channels[c][i] for c in range(len(channels))], axis=0)
+                for i in range(n_samples)
+            ],
+            axis=0,
+        )
+        return stacked, "batched_multivariate"
+    if isinstance(X_test, np.ndarray) and X_test.ndim == 3:
+        if X_test.shape[1] == 1:
+            return (
+                [
+                    np.asarray(X_test[i, 0, :], dtype=np.float32)
+                    for i in range(X_test.shape[0])
+                ],
+                "list_univariate",
+            )
+        if multivariate:
+            return np.asarray(X_test, dtype=np.float32), "batched_multivariate"
+        return (
+            [
+                np.asarray(X_test[i, 0, :], dtype=np.float32)
+                for i in range(X_test.shape[0])
+            ],
+            "list_univariate",
+        )
+    if isinstance(X_test, np.ndarray) and X_test.ndim == 2:
+        return (
+            [np.asarray(X_test[i], dtype=np.float32) for i in range(X_test.shape[0])],
+            "list_univariate",
+        )
+    return (
+        [np.asarray(x, dtype=np.float32) for x in X_test],
+        "list_univariate",
+    )
+
+
 
 
 def reshape_dataset(dataset, order="NLC"):
@@ -321,7 +400,7 @@ def train_nbeats(X_train, y_train, X_val, y_val, random_state=42):
         input_dim=input_dim,
         output_dim=output_dim,
     )
-    optimizer = keras.optimizers.legacy.Adam(learning_rate=0.0001)
+    optimizer = keras.optimizers.Adam(learning_rate=0.0001)
     model.compile(optimizer, loss="mae")
     early_stopping = keras.callbacks.EarlyStopping(
         monitor="val_loss", min_delta=0.0001, patience=10, restore_best_weights=True
@@ -406,7 +485,7 @@ def train_nbeats_i(X_train, y_train, X_val, y_val, random_state=42):
         forecast_length=y_train.shape[1],
         backcast_length=X_train.shape[1],
     )
-    optimizer = keras.optimizers.legacy.Adam(learning_rate=0.0001)
+    optimizer = keras.optimizers.Adam(learning_rate=0.0001)
     model.compile(optimizer, loss="mae")
     early_stopping = keras.callbacks.EarlyStopping(
         monitor="val_loss", min_delta=0.0001, patience=10, restore_best_weights=True
@@ -447,7 +526,7 @@ def predict_gru(dataset, random_states):
             reshape = keras.layers.Reshape((y_train.shape[1], y_train.shape[-1]))(dense)
             model = keras.Model(inputs=inputs, outputs=reshape)
 
-        optimizer = keras.optimizers.legacy.Adam(learning_rate=0.0001)
+        optimizer = keras.optimizers.Adam(learning_rate=0.0001)
         model.compile(optimizer, loss="mae")
 
         early_stopping = keras.callbacks.EarlyStopping(
@@ -515,14 +594,14 @@ def predict_dlinear(dataset, random_states):
     config.features = "M"
     config.lradj = "type1"
     config.moving_avg = 25
-    config.batch_size = 16
+    config.batch_size = 128
 
     all_pred = []
     all_inference_times = []
     for r in random_states:
-        random.seed(r)
-        torch.manual_seed(r)
-        np.random.seed(r)
+        random.seed(int(r))
+        torch.manual_seed(int(r))
+        np.random.seed(int(r))
 
         # Create model with pytorch
         device = _acquire_device(
@@ -593,7 +672,7 @@ def predict_fedformer(dataset, d_ff, d_model, random_states):
     config.lradj = "type1"
     config.top_k = 5
     config.num_kernels = 6
-    config.batch_size = 16
+    config.batch_size = 128
 
     config.moving_avg = 25
     config.n_heads = 8
@@ -603,9 +682,9 @@ def predict_fedformer(dataset, d_ff, d_model, random_states):
     all_pred = []
     all_inference_times = []
     for r in random_states:
-        random.seed(r)
-        torch.manual_seed(r)
-        np.random.seed(r)
+        random.seed(int(r))
+        torch.manual_seed(int(r))
+        np.random.seed(int(r))
 
         # Create model with pytorch
         device = _acquire_device(
@@ -661,38 +740,39 @@ def predict_nonstationary_transformer(dataset, d_ff, d_model, random_states):
     if len(dataset["X_train"].shape) < 3:
         config.enc_in = 1
         config.dec_in = 1
+        config.c_out = 1
     else:
         config.enc_in = dataset["X_train"].shape[0]
         config.dec_in = dataset["X_train"].shape[0]
+        config.c_out = dataset["X_train"].shape[0]
     config.embed = "timeF"
     config.dropout = 0.1
-    config.c_out = 1
     config.d_model = d_model
     config.d_ff = d_ff
     config.freq = "h"
     config.patience = 3
-    config.learning_rate = 0.001
-    config.train_epochs = 5
+    config.learning_rate = 0.0001
+    config.train_epochs = 10
     config.features = "M"
     config.lradj = "type1"
     config.top_k = 5
     config.num_kernels = 6
-    config.batch_size = 16
+    config.batch_size = 128
 
     config.n_heads = 8
     config.activation = "gelu"
     config.d_layers = 1
     config.output_attention = True
     config.factor = 1
-    config.p_hidden_dims = [256, 256]
+    config.p_hidden_dims = [32, 32]
     config.p_hidden_layers = 2
 
     all_pred = []
     all_inference_times = []
     for r in random_states:
-        random.seed(r)
-        torch.manual_seed(r)
-        np.random.seed(r)
+        random.seed(int(r))
+        torch.manual_seed(int(r))
+        np.random.seed(int(r))
 
         # Create model with pytorch
         device = _acquire_device(
@@ -763,14 +843,14 @@ def predict_timesnet(dataset, d_ff, d_model, random_states):
     config.lradj = "type1"
     config.top_k = 5
     config.num_kernels = 6
-    config.batch_size = 16
+    config.batch_size = 128
 
     all_pred = []
     all_inference_times = []
     for r in random_states:
-        random.seed(r)
-        torch.manual_seed(r)
-        np.random.seed(r)
+        random.seed(int(r))
+        torch.manual_seed(int(r))
+        np.random.seed(int(r))
 
         # Create model with pytorch
         device = _acquire_device(
@@ -803,3 +883,447 @@ def predict_timesnet(dataset, d_ff, d_model, random_states):
         all_pred.append(y_pred)
 
     return np.array(all_pred), np.mean(all_inference_times)
+
+
+# iTransformer; https://arxiv.org/pdf/2310.06625
+def predict_itransformer(dataset, d_ff, d_model, random_states):
+    class ModelConfig(object):
+        pass
+
+    config = ModelConfig()
+
+    config.use_gpu = False
+    config.devices = "0,1,2,3"
+    config.gpu = 0
+    config.use_multi_gpu = False
+
+    config.pred_len = dataset["y_train"].shape[-1]
+    config.label_len = dataset["y_train"].shape[-1]
+    config.seq_len = dataset["X_train"].shape[-1]
+    config.e_layers = 2
+    if len(dataset["X_train"].shape) < 3:
+        config.enc_in = 1
+        config.dec_in = 1
+        config.c_out = 1
+    else:
+        config.enc_in = dataset["X_train"].shape[0]
+        config.dec_in = dataset["X_train"].shape[0]
+        config.c_out = dataset["X_train"].shape[0]
+    config.embed = "timeF"
+    config.dropout = 0.1
+    config.d_model = d_model
+    config.d_ff = d_ff
+    config.freq = "h"
+    config.patience = 3
+    config.learning_rate = 0.0001
+    config.train_epochs = 10
+    config.features = "M"
+    config.lradj = "type1"
+    config.top_k = 5
+    config.num_kernels = 6
+    config.batch_size = 128
+
+    config.n_heads = 8
+    config.activation = "gelu"
+    config.d_layers = 1
+    config.output_attention = True
+    config.factor = 1
+    config.p_hidden_dims = [32, 32]
+    config.p_hidden_layers = 2
+
+    all_pred = []
+    all_inference_times = []
+    for r in random_states:
+        random.seed(int(r))
+        torch.manual_seed(int(r))
+        np.random.seed(int(r))
+
+        device = _acquire_device(
+            config.use_gpu, config.gpu, config.use_multi_gpu, config.devices
+        )
+
+        model = iTransformer(config).float()
+        if config.use_gpu:
+            device_ids = config.devices.split(",")
+            device_ids = [int(id_) for id_ in device_ids]
+            model = nn.DataParallel(model, device_ids=device_ids)
+        model = model.to(device)
+
+        X_train, y_train, X_val, y_val, X_test = reshape_dataset(dataset)
+
+        model = train_model(model, config, X_train, y_train, X_val, y_val)
+
+        total_inference_time = 0
+
+        t0 = time.time()
+        y_pred = predict(model, config, X_test)
+        total_inference_time += time.time() - t0
+        all_inference_times.append(total_inference_time)
+
+        if len(dataset["X_train"].shape) < 3:
+            y_pred = y_pred.reshape(y_pred.shape[0], y_pred.shape[1])
+        else:
+            y_pred = y_pred.transpose(2, 0, 1)
+        all_pred.append(y_pred)
+
+    return np.array(all_pred), np.mean(all_inference_times)
+
+
+# TimeMixer; https://arxiv.org/pdf/2405.14616
+def predict_timemixer(dataset, d_ff, d_model, random_states):
+    class ModelConfig(object):
+        pass
+
+    config = ModelConfig()
+
+    config.use_gpu = False
+    config.devices = "0,1,2,3"
+    config.gpu = 0
+    config.use_multi_gpu = False
+
+    config.pred_len = dataset["y_train"].shape[-1]
+    config.label_len = dataset["y_train"].shape[-1]
+    config.seq_len = dataset["X_train"].shape[-1]
+    config.e_layers = 2
+    if len(dataset["X_train"].shape) < 3:
+        config.enc_in = 1
+        config.dec_in = 1
+        config.c_out = 1
+    else:
+        config.enc_in = dataset["X_train"].shape[0]
+        config.dec_in = dataset["X_train"].shape[0]
+        config.c_out = dataset["X_train"].shape[0]
+    config.embed = "timeF"
+    config.dropout = 0.1
+    config.d_model = d_model
+    config.d_ff = d_ff
+    config.freq = "h"
+    config.patience = 3
+    config.learning_rate = 0.0001
+    config.train_epochs = 10
+    config.features = "M"
+    config.lradj = "type1"
+    config.top_k = 5
+    config.num_kernels = 6
+    config.batch_size = 128
+
+    config.n_heads = 8
+    config.activation = "gelu"
+    config.d_layers = 1
+    config.output_attention = True
+    config.factor = 1
+    config.p_hidden_dims = [32, 32]
+    config.p_hidden_layers = 2
+    config.down_sampling_window = 2
+    config.down_sampling_layers = 3 if config.seq_len > 5 else 1
+    config.channel_independence = 1
+    config.decomp_method = "moving_avg"
+    config.moving_avg = 25
+    config.use_norm = 1
+    config.down_sampling_method = "avg"
+
+    all_pred = []
+    all_inference_times = []
+    for r in random_states:
+        random.seed(int(r))
+        torch.manual_seed(int(r))
+        np.random.seed(int(r))
+
+        device = _acquire_device(
+            config.use_gpu, config.gpu, config.use_multi_gpu, config.devices
+        )
+
+        model = TimeMixer(config).float()
+        if config.use_gpu:
+            device_ids = config.devices.split(",")
+            device_ids = [int(id_) for id_ in device_ids]
+            model = nn.DataParallel(model, device_ids=device_ids)
+        model = model.to(device)
+
+        X_train, y_train, X_val, y_val, X_test = reshape_dataset(dataset)
+
+        model = train_model(model, config, X_train, y_train, X_val, y_val)
+
+        total_inference_time = 0
+
+        t0 = time.time()
+        y_pred = predict(model, config, X_test)
+        total_inference_time += time.time() - t0
+        all_inference_times.append(total_inference_time)
+
+        if len(dataset["X_train"].shape) < 3:
+            y_pred = y_pred.reshape(y_pred.shape[0], y_pred.shape[1])
+        else:
+            y_pred = y_pred.transpose(2, 0, 1)
+        all_pred.append(y_pred)
+
+    return np.array(all_pred), np.mean(all_inference_times)
+
+
+# PatchTST; https://arxiv.org/pdf/2211.14730
+def predict_patchtst(dataset, d_ff, d_model, random_states):
+    class ModelConfig(object):
+        pass
+
+    config = ModelConfig()
+
+    config.use_gpu = False
+    config.devices = "0,1,2,3"
+    config.gpu = 0
+    config.use_multi_gpu = False
+
+    config.pred_len = dataset["y_train"].shape[-1]
+    config.label_len = dataset["y_train"].shape[-1]
+    config.seq_len = dataset["X_train"].shape[-1]
+    config.e_layers = 2
+    if len(dataset["X_train"].shape) < 3:
+        config.enc_in = 1
+        config.dec_in = 1
+        config.c_out = 1
+    else:
+        config.enc_in = dataset["X_train"].shape[0]
+        config.dec_in = dataset["X_train"].shape[0]
+        config.c_out = dataset["X_train"].shape[0]
+    config.embed = "timeF"
+    config.dropout = 0.1
+    config.d_model = d_model
+    config.d_ff = d_ff
+    config.freq = "h"
+    config.patience = 3
+    config.learning_rate = 0.0001
+    config.train_epochs = 10
+    config.features = "M"
+    config.lradj = "type1"
+    config.top_k = 5
+    config.num_kernels = 6
+    config.batch_size = 128
+
+    config.n_heads = 8
+    config.activation = "gelu"
+    config.d_layers = 1
+    config.output_attention = True
+    config.factor = 1
+    config.p_hidden_dims = [32, 32]
+    config.p_hidden_layers = 2
+
+    patch_len = min(16, config.seq_len)
+
+    all_pred = []
+    all_inference_times = []
+    for r in random_states:
+        random.seed(int(r))
+        torch.manual_seed(int(r))
+        np.random.seed(int(r))
+
+        device = _acquire_device(
+            config.use_gpu, config.gpu, config.use_multi_gpu, config.devices
+        )
+
+        model = PatchTST(config, patch_len=patch_len).float()
+        if config.use_gpu:
+            device_ids = config.devices.split(",")
+            device_ids = [int(id_) for id_ in device_ids]
+            model = nn.DataParallel(model, device_ids=device_ids)
+        model = model.to(device)
+
+        X_train, y_train, X_val, y_val, X_test = reshape_dataset(dataset)
+
+        model = train_model(model, config, X_train, y_train, X_val, y_val)
+
+        total_inference_time = 0
+
+        t0 = time.time()
+        y_pred = predict(model, config, X_test)
+        total_inference_time += time.time() - t0
+        all_inference_times.append(total_inference_time)
+
+        if len(dataset["X_train"].shape) < 3:
+            y_pred = y_pred.reshape(y_pred.shape[0], y_pred.shape[1])
+        else:
+            y_pred = y_pred.transpose(2, 0, 1)
+        all_pred.append(y_pred)
+
+    if np.sum(np.isnan(all_pred)) > 0:
+        print("[WARN] PatchTST produced nan predictions")
+        pred_naive, _ = predict_naive(dataset)
+        return np.array([pred_naive]), np.mean(all_inference_times)
+    return np.array(all_pred), np.mean(all_inference_times)
+
+
+def predict_chronos2(dataset, random_states):
+    """
+    Zero-shot forecasting with Amazon Chronos-2.
+
+    Requires ``chronos-forecasting`` (``pip install chronos-forecasting``).
+    """
+    try:
+        from chronos import Chronos2Pipeline
+    except ImportError as exc:
+        raise ImportError(
+            "Chronos-2 requires chronos-forecasting. Install with: pip install chronos-forecasting"
+        ) from exc
+
+    import requests
+    import urllib3
+    from huggingface_hub import configure_http_backend
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    def _backend_factory() -> requests.Session:
+        session = requests.Session()
+        session.verify = False
+        return session
+
+    configure_http_backend(backend_factory=_backend_factory)
+
+    prediction_length = int(dataset["y_train"].shape[-1])
+    device_map = "cuda" if torch.cuda.is_available() else "cpu"
+    pipeline = Chronos2Pipeline.from_pretrained(
+        CHRONOS2_MODEL_ID, device_map=device_map
+    )
+    inputs, _layout = _prepare_chronos2_inputs(dataset)
+
+    all_pred = []
+    all_inference_times = []
+    for r in random_states:
+        random.seed(int(r))
+        torch.manual_seed(int(r))
+        np.random.seed(int(r))
+
+        t0 = time.time()
+        _, mean_list = pipeline.predict_quantiles(
+            inputs=inputs,
+            prediction_length=prediction_length,
+            batch_size=CHRONOS2_PREDICT_BATCH_SIZE,
+            limit_prediction_length=False,
+        )
+        total_inference_time = time.time() - t0
+        y_pred = _chronos2_stack_mean_predictions(mean_list)
+        all_pred.append(y_pred)
+        all_inference_times.append(total_inference_time)
+
+    return np.array(all_pred), float(np.mean(all_inference_times))
+
+
+MOIRAI_MODEL_ID = "Salesforce/moirai-1.1-R-large"
+MOIRAI_PREDICT_BATCH_SIZE = 32
+
+
+def predict_moirai(dataset, random_states):
+    """
+    Zero-shot forecasting with Salesforce Moirai 1.1 using direct forward() calls.
+
+    Uses patch_size="auto" with proper padding: Moirai requires
+    past_length = context_length + prediction_length when patch_size="auto".
+    The extra prediction_length timesteps at the front are zero-padded and
+    marked as past_is_pad=True so the model ignores them for forecasting but
+    uses them to select the optimal patch size.
+
+    Requires ``uni2ts`` (``pip install uni2ts``).
+    Model size can be changed via MOIRAI_MODEL_ID:
+      Salesforce/moirai-1.1-R-small | -base | -large
+    """
+    try:
+        from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
+    except ImportError as exc:
+        raise ImportError(
+            "Moirai requires uni2ts. Install with: pip install uni2ts"
+        ) from exc
+
+    import requests
+    import urllib3
+    from huggingface_hub import configure_http_backend
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    def _backend_factory() -> requests.Session:
+        session = requests.Session()
+        session.verify = False
+        return session
+
+    configure_http_backend(backend_factory=_backend_factory)
+
+    X_test = np.array(dataset["X_test"])   # (n_instances, context_length)
+    y_test = np.array(dataset["y_test"])   # (n_instances, prediction_length)
+    context_length = X_test.shape[-1]
+    prediction_length = y_test.shape[-1]
+    n_instances = X_test.shape[0]
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # contexts: (n_instances, context_length, 1)  — NLC layout expected by Moirai
+    contexts = torch.tensor(
+        X_test[:, :, np.newaxis], dtype=torch.float32, device=device
+    )
+
+    # patch_size="auto" requires past_length = context_length + prediction_length.
+    # Prepend prediction_length zero timesteps marked as padding so Moirai can
+    # select the optimal patch size without seeing artificial data.
+    pad_len = prediction_length
+    padded = torch.cat(
+        [
+            torch.zeros(n_instances, pad_len, 1, dtype=torch.float32, device=device),
+            contexts,
+        ],
+        dim=1,
+    )  # (n, ctx+pred, 1)
+    past_observed = torch.cat(
+        [
+            torch.zeros(n_instances, pad_len, 1, dtype=torch.bool, device=device),
+            torch.ones(n_instances, context_length, 1, dtype=torch.bool, device=device),
+        ],
+        dim=1,
+    )  # (n, ctx+pred, 1)
+    past_is_pad = torch.cat(
+        [
+            torch.ones(n_instances, pad_len, dtype=torch.bool, device=device),
+            torch.zeros(n_instances, context_length, dtype=torch.bool, device=device),
+        ],
+        dim=1,
+    )  # (n, ctx+pred)
+
+    all_pred = []
+    all_inference_times = []
+
+    for r in random_states:
+        random.seed(int(r))
+        torch.manual_seed(int(r))
+        np.random.seed(int(r))
+
+        model = MoiraiForecast(
+            module=MoiraiModule.from_pretrained(MOIRAI_MODEL_ID),
+            prediction_length=prediction_length,
+            context_length=context_length,
+            patch_size="auto",
+            num_samples=20,
+            target_dim=1,
+            feat_dynamic_real_dim=0,
+            past_feat_dynamic_real_dim=0,
+        ).to(device)
+        model.eval()
+
+        t0 = time.time()
+        batch_preds = []
+        with torch.no_grad():
+            for start in range(0, n_instances, MOIRAI_PREDICT_BATCH_SIZE):
+                end = min(start + MOIRAI_PREDICT_BATCH_SIZE, n_instances)
+                b_padded = padded[start:end]
+                b_observed = past_observed[start:end]
+                b_is_pad = past_is_pad[start:end]
+
+                # output: (batch, num_samples, prediction_length)
+                output = model(
+                    past_target=b_padded,
+                    past_observed_target=b_observed,
+                    past_is_pad=b_is_pad,
+                )
+                # Take median over samples for a point forecast
+                median = output.median(dim=1).values  # (batch, prediction_length)
+                batch_preds.append(median.cpu().numpy())
+
+        total_inference_time = time.time() - t0
+        y_pred = np.concatenate(batch_preds, axis=0)  # (n_instances, prediction_length)
+        all_pred.append(y_pred)
+        all_inference_times.append(total_inference_time)
+
+    return np.array(all_pred), float(np.mean(all_inference_times))

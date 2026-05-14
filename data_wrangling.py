@@ -537,7 +537,8 @@ def train_test_split(ts, horizon, input_size, train_size, val_size, stride_lengt
 
 
 def read_dataset(
-    dataset, train_size=0.6, val_size=0.2, stride_length=1, backhorizon=10, horizon=10
+    dataset, train_size=0.6, val_size=0.2, stride_length=1, backhorizon=10, horizon=10,
+    max_series=None, random_seed=42
 ):
     data_path = "data/UTS/"
 
@@ -557,6 +558,14 @@ def read_dataset(
 
     transactions_path = data_path + "transactions.csv"
 
+    tourism_q_path = data_path + "tourism_quarterly_dataset.tsf"
+    tourism_y_path = data_path + "tourism_yearly_dataset.tsf"
+    m1_y_path = data_path + "m1_yearly_dataset.tsf"
+    m1_q_path = data_path + "m1_quarterly_dataset.tsf"
+    m1_m_path = data_path + "m1_monthly_dataset.tsf"
+    m4_d_path = data_path + "m4_daily_dataset.tsf"
+    m4_m_path = data_path + "m4_monthly_dataset.tsf"
+    m4_q_path = data_path + "m4_quarterly_dataset.tsf"
     if dataset == "cif":
         df = read_cif(cif_path)
     elif dataset == "nn5":
@@ -581,9 +590,28 @@ def read_dataset(
         df = read_m3(m3_other_path)
     elif dataset == "transactions":
         df = read_transactions(transactions_path)
+    elif dataset == "tourism_q":
+        df = read_monash_tsf(tourism_q_path)
+    elif dataset == "tourism_y":
+        df = read_monash_tsf(tourism_y_path)
+    elif dataset == "m1_y":
+        df = read_monash_tsf(m1_y_path)
+    elif dataset == "m1_q":
+        df = read_monash_tsf(m1_q_path)
+    elif dataset == "m1_m":
+        df = read_monash_tsf(m1_m_path)
+    elif dataset == "m4_d":
+        df = read_monash_tsf(m4_d_path)
+    elif dataset == "m4_m":
+        df = read_monash_tsf(m4_m_path)
+    elif dataset == "m4_q":
+        df = read_monash_tsf(m4_q_path)
     else:
         print("Attempting to read unknown dataset")
         raise NotImplementedError()
+
+    if max_series is not None and len(df) > max_series:
+        df = df.sample(n=max_series, random_state=random_seed)
 
     train_test = {
         "ts_raw": [],
@@ -616,41 +644,79 @@ def read_dataset(
     return train_test
 
 
+def read_monash_tsf(path, value_filter=None, encoding="cp1252"):
+    """Parse a Monash `.tsf` file into a NaN-padded DataFrame of one series per row.
+
+    Scans the header for the `@data` marker (skiprows is determined dynamically)
+    and the `@attribute` lines (used to label per-series metadata columns).
+    Each data line has the form `<meta_1>:<meta_2>:...:<v1>,<v2>,...`. The last
+    colon-separated field is the numeric value series; preceding fields are
+    metadata. `?` value tokens are converted to NaN.
+
+    Parameters
+    ----------
+    path : str
+    value_filter : callable, optional
+        Called as ``value_filter(meta)`` with ``meta`` a dict of metadata
+        attributes for each series. Series for which it returns False are
+        dropped. Used e.g. to keep only CIF rows with horizon == 12.
+    encoding : str
+        File encoding (Monash files are typically cp1252).
+    """
+    attribute_names = []
+    data_lines = []
+    in_data = False
+    with open(path, "r", encoding=encoding) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if in_data:
+                data_lines.append(line)
+                continue
+            if line.startswith("@attribute"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    attribute_names.append(parts[1])
+            elif line.lower().startswith("@data"):
+                in_data = True
+
+    series_list = []
+    for line in data_lines:
+        fields = line.split(":")
+        if len(fields) < 2:
+            continue
+        meta_fields = fields[:-1]
+        value_field = fields[-1]
+        meta = {}
+        for i, val in enumerate(meta_fields):
+            name = attribute_names[i] if i < len(attribute_names) else f"attr_{i}"
+            meta[name] = val
+        if value_filter is not None and not value_filter(meta):
+            continue
+        values = [np.nan if v == "?" else float(v) for v in value_field.split(",")]
+        series_list.append(values)
+
+    return pd.DataFrame(series_list)
+
+
 def read_cif(path):
-    df = pd.read_csv(
-        path,
-        sep=":|,",
-        encoding="cp1252",
-        engine="python",
-        header=None,
-        index_col=0,
-        skiprows=16,
-    )
-    # Filter for 12 months forecasting horizon
-    df = df[df.iloc[:, 0] == 12]
-    return df.iloc[:, 1:]
+    # Keep only series with the 12-month competition horizon
+    def _is_horizon_12(meta):
+        try:
+            return int(float(meta.get("horizon"))) == 12
+        except (TypeError, ValueError):
+            return False
+
+    return read_monash_tsf(path, value_filter=_is_horizon_12)
 
 
 def read_nn5(path):
-    df = pd.read_csv(
-        path, sep=":|,", engine="python", header=None, index_col=0, skiprows=19
-    )
-    return df.iloc[:, 1:]
+    return read_monash_tsf(path)
 
 
 def read_tourism(path):
-    df = pd.read_csv(
-        path,
-        sep=":",
-        encoding="cp1252",
-        engine="python",
-        header=None,
-        index_col=0,
-        skiprows=15,
-    )
-    df = df.loc[:, 2].str.split(",", expand=True)
-    df = df.astype("float")
-    return df
+    return read_monash_tsf(path)
 
 
 def read_weather(path):

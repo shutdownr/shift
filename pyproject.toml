@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Flat repo: root `.py` files are scripts/modules; only `other_models/` is importable as a package.
+# `data/`, `plots/`, `results/`, `artifacts/` must not be auto-discovered as packages.
+py-modules = [
+    "SHIFT",
+    "basic_models",
+    "benchmark_ablation",
+    "benchmark_backhorizon_horizon",
+    "benchmark_by_sample",
+    "benchmark_scalability",
+    "data_wrangling",
+    "dataset_config",
+    "evaluation",
+    "experiment_distribution_shift",
+    "experiment_knn",
+    "experiment_similarity",
+    "f_shapelet_utils",
+    "main",
+    "metrics",
+    "utility",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["other_models*"]
+namespaces = true
+
+[project]
+name = "shift"
+version = "0.1.0"
+description = "SHIFT: interpretable time series forecasting with f-shapelets and benchmarking baselines."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "chronos-forecasting>=1.0.0",
+    "keras>=3.0.0",
+    "einops>=0.6.0",
+    "matplotlib>=3.5.0",
+    "numpy>=1.22.0",
+    "pandas>=1.4.0",
+    "reformer-pytorch>=1.4.0",
+    "scikit-learn>=1.0.0",
+    "scipy>=1.8.0",
+    "statsforecast>=1.7.0",
+    "sympy>=1.10.0",
+    "tensorflow>=2.12.0",
+    "torch>=2.0.0",
+    "uni2ts>=1.1.0",
+]
+
+# Use OS trust store (fixes TLS "UnknownIssuer" behind corporate proxies / custom roots).
+# Equivalent to: uv sync --system-certs  or  UV_SYSTEM_CERTS=true
+[tool.uv]
+system-certs = true
